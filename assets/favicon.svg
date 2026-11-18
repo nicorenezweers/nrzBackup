@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <rect width="256" height="256" rx="56" fill="#18181b"/>
+  <!-- cloud -->
+  <path d="M72 176 h112 a36 36 0 0 0 4-71.8 A52 52 0 0 0 88.6 92.4 A42 42 0 0 0 72 176 z" fill="#3f3f46"/>
+  <!-- shield -->
+  <path d="M128 92 l40 14 v28 c0 26-17 44-40 54 c-23-10-40-28-40-54 v-28 z" fill="#e4e4e7"/>
+  <!-- check -->
+  <path d="M111 138 l12 12 l24-26" fill="none" stroke="#18181b" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

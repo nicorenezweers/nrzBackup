@@ -1,0 +1,10 @@
+[package]
+name = "nrzbackup-shared"
+version = "1.0.0"
+edition = "2024"
+publish = false
+license = "MIT"
+description = "API types shared by the nrzBackup web app and server."
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }

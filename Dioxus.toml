@@ -1,0 +1,13 @@
+[application]
+name = "nrzbackup"
+
+[web.app]
+title = "nrzBackup"
+
+[serve]
+port = 8091
+
+# During development (`dx serve`), API calls go to a locally running server:
+#   NRZBACKUP_ADDR=127.0.0.1:8090 cargo run -p nrzbackup-server
+[[web.proxy]]
+backend = "http://127.0.0.1:8090/api/"
