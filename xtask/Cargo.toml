@@ -1,0 +1,10 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT"
+description = "Build and release tasks for nrzBackup (cargo xtask)."
+
+[dependencies]
+serde_json = "1"

@@ -1,4 +1,8 @@
-/* nrzBackup – nrzUI-Thema (rust-ui, MIT): dunkle Grautoene wie alle nrzApps.
+//! Web-App-Quellen, die `dx` als Dateien im Crate-Stamm erwartet: das nrzUI-Thema
+//! (Tailwind-Eingabe) und die HTML-Huelle. `cargo xtask web` schreibt sie vor dem Bauen.
+
+/// nrzUI-Thema, Eingabe fuer Tailwind (`dx` erzeugt daraus `assets/tailwind.css`).
+pub const TAILWIND_CSS: &str = r##"/* nrzBackup – nrzUI-Thema (rust-ui, MIT): dunkle Grautoene wie alle nrzApps.
    Farbe nur, wo sie etwas bedeutet (gruen = alles gut, gelb = Warnung, rot = Fehler). */
 @import "tailwindcss";
 
@@ -179,3 +183,33 @@
   }
   [data-tip=""]:hover::after { display: none; }
 }
+"##;
+
+/// HTML-Huelle der Web-App (`{app_title}` setzt `dx` aus `Dioxus.toml`).
+pub const INDEX_HTML: &str = r##"<!DOCTYPE html>
+<html lang="de" class="dark">
+    <head>
+        <title>{app_title}</title>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+        <meta name="theme-color" content="#121212">
+        <meta name="color-scheme" content="dark">
+        <meta name="application-name" content="nrzBackup">
+        <meta name="apple-mobile-web-app-capable" content="yes">
+        <meta name="mobile-web-app-capable" content="yes">
+        <meta name="apple-mobile-web-app-title" content="nrzBackup">
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+        <meta name="format-detection" content="telephone=no">
+        <link rel="manifest" href="/manifest.webmanifest">
+        <link rel="apple-touch-icon" href="/icons/icon.svg">
+        <style>
+            /* Shown until the WebAssembly app has rendered (no white flash on start). */
+            html, body { margin: 0; height: 100%; background: #121212; }
+            #main:empty { height: 100%; background: #121212 url("/icons/icon.svg") center / 72px no-repeat; }
+        </style>
+    </head>
+    <body>
+        <div id="main"></div>
+    </body>
+</html>
+"##;
