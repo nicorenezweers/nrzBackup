@@ -7,6 +7,7 @@ mod api;
 mod components;
 mod pages;
 
+use pages::calendar::Calendar;
 use pages::events::Events;
 use pages::explorer::Explorer;
 use pages::layout::Shell;
@@ -28,6 +29,8 @@ pub enum Route {
         Sources {},
         #[route("/sources/:id")]
         SourceView { id: i64 },
+        #[route("/calendar")]
+        Calendar {},
         #[route("/files")]
         Explorer {},
         #[route("/events")]

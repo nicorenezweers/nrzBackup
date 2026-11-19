@@ -219,8 +219,27 @@ pub fn umbrel_download_url(path: &str) -> String {
 
 // ── Master key / stopping apps ──
 
-pub async fn masterkey() -> Res<shared::MasterKeySecret> {
-    get("/api/masterkey").await
+/// Shows the master key after checking the app password.
+pub async fn masterkey_reveal(password: &str) -> Res<shared::MasterKeySecret> {
+    send(
+        Request::post("/api/masterkey/reveal"),
+        &shared::MasterKeyReveal { password: password.into() },
+    )
+    .await
+}
+
+// ── Statistics / calendar ──
+
+pub async fn stats() -> Res<shared::Stats> {
+    get("/api/stats").await
+}
+
+pub async fn calendar(from: i64, to: i64) -> Res<Vec<shared::BackupItem>> {
+    get(&format!("/api/calendar?from={from}&to={to}")).await
+}
+
+pub async fn backup_all() -> Res<shared::ActionResult> {
+    post("/api/backup-all").await
 }
 
 pub async fn masterkey_confirm() -> Res<()> {

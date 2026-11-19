@@ -24,6 +24,7 @@ mod prompt;
 mod pull;
 mod retention;
 mod secret;
+mod stats;
 mod status;
 mod umbrel;
 mod worker;
@@ -197,7 +198,11 @@ async fn main() {
         .route("/api/session", get(api::session))
         .route("/api/login", post(api::login))
         .route("/api/logout", post(api::logout))
-        .route("/api/masterkey", get(api::get_masterkey))
+        .route("/api/masterkey/reveal", post(api::reveal_masterkey))
+        .route("/api/masterkey/saved", post(api::masterkey_saved))
+        .route("/api/stats", get(api::get_stats))
+        .route("/api/calendar", get(api::calendar))
+        .route("/api/backup-all", post(api::backup_all))
         .route("/api/masterkey/confirm", post(api::confirm_masterkey))
         .route("/api/sources/{id}/stop", put(api::set_stop_app))
         .route("/api/overview", get(api::overview))

@@ -28,7 +28,9 @@ const INSTRUCTIONS: &str = "nrzBackup stores backups of other apps encrypted (en
 in Filen.io and keeps a configurable number of copies per source (last, daily, weekly, monthly, yearly). \
 Start with get_status for the traffic light (ok/warning/error), the Filen storage and every source. \
 To deliver a file use backup_file (small files, base64) or backup_from_url (nrzBackup downloads it). \
-request_backup asks an app to send a backup now. Timestamps are Unix seconds, sizes bytes. \
+request_backup asks an app to send a backup now, backup_all asks every source at once. \
+get_storage tells how much is backed up and how much is free in Filen, get_app_coverage which percentage of the \
+umbrelOS apps is backed up, get_forecast calculates the space the backups will need. Timestamps are Unix seconds, sizes bytes. \
 `source` accepts the id, the slug or the name.";
 
 pub async fn post(
@@ -266,6 +268,43 @@ fn tools(admin: bool) -> Vec<Value> {
             false,
         ));
         t.push(tool(
+            "backup_all",
+            "Back up everything now",
+            "Request a backup from every source that can be asked (HTTP, MCP, umbrelOS) at once. Sources whose app pushes by itself are skipped. Runs in the background; results appear in get_events.",
+            json!({}),
+            &[],
+            false,
+        ));
+        t.push(tool(
+            "get_storage",
+            "Storage",
+            "How much is backed up and how much space is left: bytes and GB of all copies in Filen, number of copies, Filen used/free/total and the percentage used, plus bytes per source.",
+            json!({}),
+            &[],
+            true,
+        ));
+        t.push(tool(
+            "get_app_coverage",
+            "App coverage",
+            "Which percentage of the installed umbrelOS apps is backed up: total apps, apps with a source, apps with at least one backup, percent, and every app with its last backup. Needs the umbrelOS connection.",
+            json!({}),
+            &[],
+            true,
+        ));
+        t.push(tool(
+            "get_forecast",
+            "Backup calculator",
+            "Calculates how much space the backups need once the retention is full and when Filen will be full. Without arguments it uses the current sizes, retention and measured growth; any argument overrides that value (what-if).",
+            json!({
+                "backup_size_gb": { "type": "number", "minimum": 0, "description": "Size of one backup of all sources together in GB (default: current)." },
+                "copies": { "type": "integer", "minimum": 1, "description": "Copies kept (default: from the retention)." },
+                "growth_percent_month": { "type": "number", "description": "Growth of the backup size in percent per month (default: measured)." },
+                "storage_max_gb": { "type": "number", "minimum": 0, "description": "Filen plan size in GB (default: current plan)." },
+            }),
+            &[],
+            true,
+        ));
+        t.push(tool(
             "get_events",
             "Events",
             "The activity log, newest first: received, stored, deleted, failed, requested.",
@@ -295,6 +334,11 @@ fn resolve(state: &AppState, caller: &Caller, args: &Value) -> Result<Source, St
                 .ok_or_else(|| format!("Unknown source: {key}"))
         }
     }
+}
+
+/// Bytes → GB with two decimals.
+fn gb(bytes: u64) -> f64 {
+    (bytes as f64 / 1e7).round() / 100.0
 }
 
 fn to_value<T: serde::Serialize>(v: T) -> Value {
@@ -392,6 +436,68 @@ async fn call(
         "request_backup" => {
             let s = resolve(state, caller, args)?;
             Ok(to_value(api::start_pull(state, &s)))
+        }
+        "backup_all" => Ok(to_value(crate::stats::backup_all(state))),
+        "get_storage" => {
+            let st = crate::stats::stats(state).await;
+            let pct = if st.storage_max > 0 { st.storage_used as f64 * 100.0 / st.storage_max as f64 } else { 0.0 };
+            let per_source: Vec<Value> = st
+                .sources
+                .iter()
+                .map(|s| json!({ "source": s.name, "copies": s.copies, "bytes": s.stored_bytes, "gb": gb(s.stored_bytes), "text": format_bytes(s.stored_bytes) }))
+                .collect();
+            Ok(json!({
+                "backed_up": { "bytes": st.stored_bytes, "gb": gb(st.stored_bytes), "text": format_bytes(st.stored_bytes), "copies": st.copies },
+                "filen": {
+                    "connected": st.filen_connected,
+                    "used_bytes": st.storage_used, "used_gb": gb(st.storage_used),
+                    "free_bytes": st.storage_free, "free_gb": gb(st.storage_free), "free_text": format_bytes(st.storage_free),
+                    "max_bytes": st.storage_max, "max_gb": gb(st.storage_max),
+                    "used_percent": (pct * 10.0).round() / 10.0,
+                },
+                "sources": per_source,
+            }))
+        }
+        "get_app_coverage" => {
+            let c = crate::stats::coverage(state).await;
+            if !c.available {
+                return Err(c.error.unwrap_or_else(|| "umbrelOS is not reachable".into()));
+            }
+            let mut v = to_value(&c);
+            if let Some(m) = v.as_object_mut() {
+                m.insert("percent".into(), json!((c.percent * 10.0).round() / 10.0));
+                m.insert("summary".into(), json!(format!("{} of {} apps backed up ({:.0} %)", c.backed_up, c.total, c.percent)));
+            }
+            Ok(v)
+        }
+        "get_forecast" => {
+            let st = crate::stats::stats(state).await;
+            let mut input = st.forecast_input;
+            if let Some(v) = args.get("backup_size_gb").and_then(Value::as_f64) {
+                input.backup_size = (v.max(0.0) * 1e9) as u64;
+            }
+            if let Some(v) = args.get("copies").and_then(Value::as_u64) {
+                input.copies = v.clamp(1, 100_000) as u32;
+            }
+            if let Some(v) = args.get("growth_percent_month").and_then(Value::as_f64) {
+                input.growth_percent_month = v;
+            }
+            if let Some(v) = args.get("storage_max_gb").and_then(Value::as_f64) {
+                input.storage_max = (v.max(0.0) * 1e9) as u64;
+            }
+            let r = calculate(&input);
+            Ok(json!({
+                "input": input,
+                "result": r,
+                "summary": {
+                    "needed_gb": gb(r.projected_bytes),
+                    "needed_in_12_months_gb": gb(r.in_12_months),
+                    "free_after_gb": (r.free_after as f64 / 1e7).round() / 100.0,
+                    "fits": r.fits,
+                    "months_until_full": r.months_until_full.map(|m| (m * 10.0).round() / 10.0),
+                },
+                "sources": st.sources,
+            }))
         }
         "get_events" => {
             let limit = args

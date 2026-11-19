@@ -37,7 +37,11 @@
 //! | `GET  /api/umbrel/browse?path=/Home` |                 | [`UmbrelDir`]     |
 //! | `POST /api/umbrel/sources`         | [`UmbrelBulk`]    | `Vec<SourceSummary>` |
 //! | `GET  /api/umbrel/download?path=/Home/x` |             | file (folders as .tar.gz) |
-//! | `GET  /api/masterkey`              |                   | [`MasterKeySecret`] |
+//! | `POST /api/masterkey/reveal`       | [`MasterKeyReveal`] | [`MasterKeySecret`] (needs the app password) |
+//! | `POST /api/masterkey/saved`        | form (username, password) | 303 → `/settings` (lets the browser offer to save the key in Google / iCloud passwords) |
+//! | `GET  /api/stats`                  |                   | [`Stats`] (storage, app coverage, forecast) |
+//! | `GET  /api/calendar?from=&to=`     |                   | `Vec<BackupItem>` (backups in that time range) |
+//! | `POST /api/backup-all`             |                   | [`ActionResult`] (requests a backup from every source that can be asked) |
 //! | `POST /api/masterkey/confirm`      |                   | `{}`              |
 //! | `PUT  /api/sources/{id}/stop`      | [`StopAppInput`]  | [`SourceDetail`]  |
 //! | `GET  /api/filen/browse?path=/nrzBackup` |             | [`FilenDir`]      |
@@ -490,6 +494,12 @@ pub struct MasterKeySecret {
     pub public_key: String,
 }
 
+/// `POST /api/masterkey/reveal`: the master key is only shown after entering the app password.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct MasterKeyReveal {
+    pub password: String,
+}
+
 /// `PUT /api/sources/{id}/stop`: stop the app during its backups.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct StopAppInput {
@@ -640,6 +650,152 @@ pub struct ActionResult {
     pub message: String,
 }
 
+// ─────────────────────────────── Statistics ───────────────────────────────
+
+/// `GET /api/stats`: storage, how many umbrelOS apps are backed up and a forecast.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct Stats {
+    /// Bytes of all copies in Filen.
+    pub stored_bytes: u64,
+    pub copies: u32,
+    pub filen_connected: bool,
+    pub storage_used: u64,
+    pub storage_max: u64,
+    /// `storage_max - storage_used`.
+    pub storage_free: u64,
+    pub coverage: AppCoverage,
+    pub sources: Vec<SourceForecast>,
+    /// Forecast for all sources together (with the measured growth).
+    pub forecast: CalcResult,
+    /// The input the forecast was made with (prefills the calculator).
+    pub forecast_input: CalcInput,
+}
+
+/// How many of the installed umbrelOS apps are backed up.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct AppCoverage {
+    /// false = umbrelOS is not reachable (see `error`).
+    pub available: bool,
+    pub error: Option<String>,
+    pub total: u32,
+    /// Apps with a source in nrzBackup.
+    pub configured: u32,
+    /// Apps with at least one backup.
+    pub backed_up: u32,
+    /// `backed_up / total * 100`.
+    pub percent: f64,
+    pub apps: Vec<AppCoverageItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct AppCoverageItem {
+    pub id: String,
+    pub name: String,
+    pub source_id: Option<i64>,
+    pub last_backup: Option<i64>,
+    pub backed_up: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct SourceForecast {
+    pub source_id: i64,
+    pub name: String,
+    /// Size of the newest backup.
+    pub latest_size: u64,
+    pub stored_bytes: u64,
+    pub copies: u32,
+    /// Days between two backups (measured, else from the schedule).
+    pub interval_days: f64,
+    /// Copies the retention keeps once it is "full".
+    pub steady_copies: u32,
+    /// `latest_size * steady_copies`.
+    pub projected_bytes: u64,
+    /// Measured growth of the backup size in percent per month.
+    pub growth_percent_month: f64,
+}
+
+/// Input of the backup calculator.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
+pub struct CalcInput {
+    /// Size of one backup (all sources together).
+    pub backup_size: u64,
+    /// Copies that are kept.
+    pub copies: u32,
+    /// Growth of the backup size in percent per month.
+    pub growth_percent_month: f64,
+    /// Used in Filen right now (backups and everything else).
+    pub storage_used: u64,
+    pub storage_max: u64,
+    /// Of `storage_used`, the bytes that are nrzBackup copies.
+    pub current_bytes: u64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
+pub struct CalcResult {
+    /// Space the copies need once the retention is full.
+    pub projected_bytes: u64,
+    /// `projected_bytes - current_bytes` (negative = it gets smaller).
+    pub extra_bytes: i64,
+    /// Free in Filen after that (negative = does not fit).
+    pub free_after: i64,
+    pub fits: bool,
+    /// Months until Filen is full with the given growth; `None` = never (no growth).
+    pub months_until_full: Option<f64>,
+    /// Space needed in 12 months with the growth.
+    pub in_12_months: u64,
+}
+
+/// Rough number of copies a retention keeps when backups come every `interval_days`.
+/// Rules overlap (the newest copy counts for all of them), so the finer rules eat into
+/// the coarser ones.
+pub fn steady_copies(r: &Retention, interval_days: f64) -> u32 {
+    let i = if interval_days.is_finite() && interval_days > 0.0 { interval_days.max(1.0 / 24.0) } else { 1.0 };
+    let rules = [
+        (r.keep_last, i),
+        (r.daily, i.max(1.0)),
+        (r.weekly, i.max(7.0)),
+        (r.monthly, i.max(30.44)),
+        (r.yearly, i.max(365.25)),
+    ];
+    let (mut span, mut total) = (0.0f64, 0.0f64);
+    for (n, p) in rules {
+        if n == 0 {
+            continue;
+        }
+        let n = f64::from(n);
+        total += n - (span / p).floor().min(n);
+        span = span.max(n * p);
+    }
+    total.max(1.0).round() as u32
+}
+
+/// The backup calculator: how much space the copies need and when Filen is full.
+pub fn calculate(i: &CalcInput) -> CalcResult {
+    let projected = i.backup_size.saturating_mul(u64::from(i.copies.max(1)));
+    let others = i.storage_used.saturating_sub(i.current_bytes);
+    let room = i.storage_max as i64 - others as i64;
+    let free_after = room - projected as i64;
+    let g = (i.growth_percent_month / 100.0).max(0.0);
+    let fits = i.storage_max == 0 || free_after >= 0;
+    let months_until_full = if i.storage_max == 0 {
+        None
+    } else if !fits {
+        Some(0.0)
+    } else if g > 0.0 && projected > 0 {
+        Some(((room as f64) / projected as f64).ln() / (1.0 + g).ln())
+    } else {
+        None
+    };
+    CalcResult {
+        projected_bytes: projected,
+        extra_bytes: projected as i64 - i.current_bytes as i64,
+        free_after,
+        fits,
+        months_until_full,
+        in_12_months: (projected as f64 * (1.0 + g).powi(12)) as u64,
+    }
+}
+
 // ─────────────────────────────── Helpers ───────────────────────────────
 
 /// `1536` → `1.5 KB` (decimal units, like Filen shows them).
@@ -689,6 +845,31 @@ mod tests {
         assert_eq!(format_bytes(999), "999 B");
         assert_eq!(format_bytes(1500), "1.5 KB");
         assert_eq!(format_bytes(250_000_000), "250 MB");
+    }
+
+    #[test]
+    fn calc() {
+        let r = Retention::default();
+        let c = steady_copies(&r, 1.0);
+        assert!((20..=24).contains(&c), "{c}");
+        assert_eq!(steady_copies(&Retention { keep_last: 3, daily: 0, weekly: 0, monthly: 0, yearly: 0 }, 1.0), 3);
+        let res = calculate(&CalcInput {
+            backup_size: 1_000,
+            copies: 10,
+            growth_percent_month: 0.0,
+            storage_used: 5_000,
+            storage_max: 20_000,
+            current_bytes: 3_000,
+        });
+        assert_eq!(res.projected_bytes, 10_000);
+        assert_eq!(res.extra_bytes, 7_000);
+        assert_eq!(res.free_after, 8_000);
+        assert!(res.fits);
+        assert_eq!(res.months_until_full, None);
+        let grow = calculate(&CalcInput { growth_percent_month: 10.0, ..Default::default() });
+        assert!(grow.fits);
+        let full = calculate(&CalcInput { backup_size: 10, copies: 1, growth_percent_month: 100.0, storage_max: 40, ..Default::default() });
+        assert!((full.months_until_full.unwrap() - 2.0).abs() < 1e-9);
     }
 
     #[test]

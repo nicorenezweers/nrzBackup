@@ -91,6 +91,7 @@ fn logout() {
 enum Nav {
     Overview,
     Sources,
+    Calendar,
     Files,
     Events,
     Settings,
@@ -99,6 +100,7 @@ enum Nav {
 fn active(route: &Route) -> Nav {
     match route {
         Route::Sources {} | Route::SourceView { .. } => Nav::Sources,
+        Route::Calendar {} => Nav::Calendar,
         Route::Explorer {} => Nav::Files,
         Route::Events {} => Nav::Events,
         Route::Settings {} => Nav::Settings,
@@ -106,9 +108,10 @@ fn active(route: &Route) -> Nav {
     }
 }
 
-const ITEMS: [(Nav, &str); 5] = [
+const ITEMS: [(Nav, &str); 6] = [
     (Nav::Overview, "Übersicht"),
     (Nav::Sources, "Quellen"),
+    (Nav::Calendar, "Kalender"),
     (Nav::Files, "Dateien"),
     (Nav::Events, "Protokoll"),
     (Nav::Settings, "Einstellungen"),
@@ -118,6 +121,7 @@ fn target(n: Nav) -> Route {
     match n {
         Nav::Overview => Route::Overview {},
         Nav::Sources => Route::Sources {},
+        Nav::Calendar => Route::Calendar {},
         Nav::Files => Route::Explorer {},
         Nav::Events => Route::Events {},
         Nav::Settings => Route::Settings {},
@@ -129,6 +133,7 @@ fn NavIcon(n: Nav) -> Element {
     match n {
         Nav::Overview => rsx! { icons::LayoutDashboard {} },
         Nav::Sources => rsx! { icons::DatabaseBackup {} },
+        Nav::Calendar => rsx! { icons::CalendarDays {} },
         Nav::Files => rsx! { icons::FolderOpen {} },
         Nav::Events => rsx! { icons::ScrollText {} },
         Nav::Settings => rsx! { icons::Settings {} },

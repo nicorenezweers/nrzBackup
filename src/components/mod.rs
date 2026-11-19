@@ -2,5 +2,6 @@
 //! `overlay` (dialog, confirmation, toasts) and the copied nrzUI components in `ui`.
 
 pub mod common;
+pub mod masterkey;
 pub mod overlay;
 pub mod ui;

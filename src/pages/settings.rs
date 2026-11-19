@@ -6,6 +6,7 @@ use nrzbackup_shared::{self as shared, ACCESS_TOKEN_PREFIX, format_bytes};
 use super::sources::TokenReveal;
 use crate::api;
 use crate::components::common::*;
+use crate::components::masterkey::MasterKeyDialog;
 use crate::components::overlay::*;
 
 #[component]
@@ -42,44 +43,24 @@ pub fn Settings() -> Element {
 
 #[component]
 fn MasterKeySection(status: shared::MasterKeyStatus, on_change: EventHandler<()>) -> Element {
-    let mut shown = use_signal(|| None::<shared::MasterKeySecret>);
-    let mut busy = use_signal(|| false);
+    let mut open = use_signal(|| false);
 
-    let show = move |_| {
-        spawn(async move {
-            let ask = Ask::new(
-                "Hauptschlüssel anzeigen?",
-                "Achte darauf, dass niemand mitliest. Wer diesen Schlüssel und Zugang zu deinem Filen-Konto hat, kann alle Backups lesen.",
-            )
-            .confirm("Anzeigen");
-            if !confirm(ask).await {
-                return;
+    // back from the password-manager form (`/settings?key=saved`)
+    use_effect(move || {
+        let Some(w) = web_sys::window() else { return };
+        if w.location().search().unwrap_or_default().contains("key=saved") {
+            toast("Wenn dein Browser gefragt hat: Hauptschlüssel im Passwort-Manager gespeichert.");
+            if let Ok(h) = w.history() {
+                let _ = h.replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some("/settings"));
             }
-            busy.set(true);
-            match api::masterkey().await {
-                Ok(k) => shown.set(Some(k)),
-                Err(e) => toast_error(e),
-            }
-            busy.set(false);
-        });
-    };
-    let done = move |_| {
-        spawn(async move {
-            match api::masterkey_confirm().await {
-                Ok(()) => {
-                    toast("Danke – der Hauptschlüssel ist als gesichert vermerkt.");
-                    shown.set(None);
-                    on_change.call(());
-                }
-                Err(e) => toast_error(e),
-            }
-        });
-    };
+        }
+    });
 
     rsx! {
+        MasterKeyDialog { open, confirmed: status.confirmed, on_change: move |_| on_change.call(()) }
         Section {
             title: "Hauptschlüssel",
-            description: "Jedes Backup wird vor dem Upload mit diesem einen Schlüssel verschlüsselt (age, zusätzlich zur Verschlüsselung von Filen). Ohne ihn kann niemand die Backups lesen – auch nicht, wer in dein Filen-Konto kommt.",
+            description: "Jedes Backup wird vor dem Upload mit diesem einen Schlüssel verschlüsselt (age, zusätzlich zur Verschlüsselung von Filen). Ohne ihn kann niemand die Backups lesen – auch nicht, wer in dein Filen-Konto kommt. Du kannst ihn jederzeit mit dem App-Passwort ansehen, ausdrucken oder in Google / iCloud sichern.",
             div { class: "grid gap-4",
                 div { class: "flex flex-wrap items-center gap-2",
                     if !status.exists {
@@ -87,43 +68,33 @@ fn MasterKeySection(status: shared::MasterKeyStatus, on_change: EventHandler<()>
                     } else if status.confirmed {
                         Tag { text: "aktiv · gesichert", tone: Tone::Success }
                     } else {
-                        Tag { text: "aktiv · noch nicht gesichert", tone: Tone::Warning }
+                        button { class: "cursor-pointer", title: "Jetzt sichern", onclick: move |_| open.set(true),
+                            Tag { text: "aktiv · noch nicht gesichert", tone: Tone::Warning }
+                        }
                     }
                     if let Some(ts) = status.created_at {
                         span { class: "text-xs text-muted-foreground", "erstellt " {fmt_time(ts)} }
                     }
                 }
                 if status.exists && !status.confirmed {
-                    Callout {
-                        text: "Bitte jetzt sichern: Schlüssel anzeigen, im Passwort-Manager UND zusätzlich offline (z. B. ausgedruckt) ablegen. Geht dieses Gerät kaputt, kommst du nur mit diesem Schlüssel an deine Backups.",
-                        warning: true,
+                    button {
+                        class: "w-full cursor-pointer text-left",
+                        onclick: move |_| open.set(true),
+                        Callout {
+                            text: "Bitte jetzt sichern: Schlüssel anzeigen, ausdrucken und im Passwort-Manager (Google / iCloud) ablegen. Geht dieses Gerät kaputt, kommst du nur mit diesem Schlüssel an deine Backups.",
+                            warning: true,
+                        }
                     }
                 }
-                if let Some(k) = shown() {
-                    div { class: "grid gap-3 rounded-lg border border-warning/40 bg-warning/5 p-4",
-                        p { class: "text-sm font-medium", "Dein Hauptschlüssel" }
-                        CodeBlock { text: k.secret_key.clone(), large: true }
-                        div { class: "flex flex-wrap gap-2",
-                            CopyButton { text: k.secret_key.clone(), label: true }
-                        }
-                        div { class: "grid gap-1 text-xs text-muted-foreground",
-                            p { "Wiederherstellen ohne nrzBackup: Schlüssel in eine Datei schreiben (z. B. hauptschluessel.txt), das Backup aus Filen laden und mit dem kostenlosen Programm age (age-encryption.org) entschlüsseln:" }
-                            code { class: "block rounded-md bg-background px-2 py-1.5 font-mono text-[11px] text-foreground", "age -d -i hauptschluessel.txt backup.tar.gz.age > backup.tar.gz" }
-                            p { "In nrzBackup selbst entschlüsselt „Herunterladen“ automatisch." }
-                        }
-                        div { class: "flex flex-wrap gap-2",
-                            button { class: "{btn(BTN_PRIMARY)}", onclick: done,
-                                icons::Check {}
-                                "Ich habe ihn sicher abgelegt"
-                            }
-                            button { class: "{btn(BTN_GHOST)}", onclick: move |_| shown.set(None), "Ausblenden" }
-                        }
-                    }
-                } else if status.exists {
-                    div {
-                        button { class: "{btn(BTN_OUTLINE)}", disabled: busy(), onclick: show,
-                            if busy() { icons::LoaderCircle { class: "animate-spin" } } else { icons::KeyRound {} }
+                if status.exists {
+                    div { class: "flex flex-wrap gap-2",
+                        button { class: "{btn(BTN_OUTLINE)}", onclick: move |_| open.set(true),
+                            icons::KeyRound {}
                             "Hauptschlüssel anzeigen"
+                        }
+                        button { class: "{btn(BTN_OUTLINE)}", onclick: move |_| open.set(true),
+                            icons::Printer {}
+                            "Ausdrucken / in Google · iCloud sichern"
                         }
                     }
                 }

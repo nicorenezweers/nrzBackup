@@ -1,6 +1,6 @@
 [package]
 name = "nrzbackup"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2024"
 publish = false
 license = "MIT"
@@ -22,7 +22,7 @@ futures-channel = "0.3"
 web-sys = { version = "0.3", features = [
   "Window", "Document", "Element", "HtmlElement", "HtmlInputElement", "HtmlAnchorElement",
   "Storage", "Navigator", "Clipboard", "Blob", "BlobPropertyBag", "Url", "File", "FileList",
-  "Location", "Event", "DomTokenList",
+  "Location", "Event", "DomTokenList", "History",
 ] }
 
 [workspace]

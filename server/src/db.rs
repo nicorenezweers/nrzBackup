@@ -639,6 +639,14 @@ impl Db {
         )
     }
 
+    /// Backups received in `[from, to)`, oldest first.
+    pub fn backups_between(&self, from: i64, to: i64) -> Vec<Backup> {
+        self.backups_where(
+            "b.created_at >= ?1 AND b.created_at < ?2 ORDER BY b.created_at, b.id LIMIT 20000",
+            params![from, to],
+        )
+    }
+
     pub fn recent(&self, limit: u32) -> Vec<Backup> {
         self.backups_where(
             "1 = 1 ORDER BY b.created_at DESC, b.id DESC LIMIT ?1",

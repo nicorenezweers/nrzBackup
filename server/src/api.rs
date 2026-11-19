@@ -723,8 +723,17 @@ fn set_file_headers(res: &mut Response, name: &str, mime: &str, size: Option<u64
 
 // ─────────────────────────── Master key ───────────────────────────
 
-pub async fn get_masterkey(State(st): S, headers: HeaderMap) -> ApiResult<MasterKeySecret> {
+/// `POST /api/masterkey/reveal`: the key is shown only with the app password (any time).
+pub async fn reveal_masterkey(
+    State(st): S,
+    headers: HeaderMap,
+    Json(req): Json<MasterKeyReveal>,
+) -> ApiResult<MasterKeySecret> {
     require(&st, &headers)?;
+    if secret::token_hash(req.password.trim()) != st.password_hash {
+        tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+        return Err(bad("Falsches Passwort – bitte das App-Passwort aus umbrelOS (nrzBackup → Zugangsdaten) eingeben"));
+    }
     let secret = crate::masterkey::secret_text(&st)
         .ok_or_else(|| bad("Der Hauptschlüssel ist nicht lesbar"))?;
     st.db
@@ -733,6 +742,49 @@ pub async fn get_masterkey(State(st): S, headers: HeaderMap) -> ApiResult<Master
         secret_key: secret,
         public_key: crate::masterkey::status(&st).public_key,
     }))
+}
+
+/// `POST /api/masterkey/saved`: target of a real form submit, so that Safari (iCloud
+/// Keychain), Chrome (Google Password Manager) and others offer to save the key. The body is
+/// ignored; only redirects back.
+pub async fn masterkey_saved(State(st): S, headers: HeaderMap) -> Response {
+    if !logged_in(&st, &headers) {
+        return axum::response::Redirect::to("/").into_response();
+    }
+    st.db.event(
+        EventLevel::Info,
+        None,
+        "Hauptschlüssel an den Passwort-Manager des Browsers übergeben",
+    );
+    axum::response::Redirect::to("/settings?key=saved").into_response()
+}
+
+/// `GET /api/stats`
+pub async fn get_stats(State(st): S, headers: HeaderMap) -> ApiResult<Stats> {
+    require(&st, &headers)?;
+    Ok(Json(crate::stats::stats(&st).await))
+}
+
+#[derive(serde::Deserialize)]
+pub struct RangeQuery {
+    from: i64,
+    to: i64,
+}
+
+/// `GET /api/calendar?from=&to=`
+pub async fn calendar(
+    State(st): S,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<RangeQuery>,
+) -> ApiResult<Vec<BackupItem>> {
+    require(&st, &headers)?;
+    Ok(Json(st.db.backups_between(q.from, q.to).into_iter().map(|b| b.item).collect()))
+}
+
+/// `POST /api/backup-all`
+pub async fn backup_all(State(st): S, headers: HeaderMap) -> ApiResult<ActionResult> {
+    require(&st, &headers)?;
+    Ok(Json(crate::stats::backup_all(&st)))
 }
 
 pub async fn confirm_masterkey(State(st): S, headers: HeaderMap) -> ApiResult<serde_json::Value> {
